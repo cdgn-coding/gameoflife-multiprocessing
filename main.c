@@ -27,15 +27,14 @@ FILE* readInput(char* filename, int* nrows, int* ncolumns) {
     char * line = NULL;
     size_t len = 0;
     ssize_t read;
-    char buffer[100];
+    char buffer[255];
 
     fp = fopen(filename, "r");
     if (fp == NULL)
         exit(EXIT_FAILURE);
 
-    
-    fscanf(fp,"%d", nrows);
-    fscanf(fp,"%d", ncolumns);
+    fscanf(fp,"%d\n", nrows);
+    fscanf(fp,"%d\n", ncolumns);
 
     return fp;
 }
@@ -62,19 +61,19 @@ int* lineToArray(char* line, int len) {
 
 void launchProcesses(int n_processes, int nrows, int ncols, FILE* file, int** inputPipes, int** outputPipes) {
     int processNumber;
-    int* currentRow;
-    int* previousRow;
-    int* secondPreviousRow;
+    int* currentRow = NULL;
+    int* previousRow = NULL;
+    int* secondPreviousRow = NULL;
     char buffer[255];
 
-    for (int i = 0; i < n_processes; ++i) {
+    for (int i = 0; i < n_processes; i++) {
         processNumber = i - 1;
         secondPreviousRow = previousRow;
         previousRow = currentRow;
         fgets(buffer, 255, file);
         currentRow = lineToArray(buffer, ncols);
 
-        if (i > 0) {
+        if (i > 1) {
             if (fork() == 0) {
                 close(outputPipes[processNumber][READ_END]);
                 close(inputPipes[processNumber][WRITE_END]);
