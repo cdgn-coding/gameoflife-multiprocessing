@@ -42,7 +42,12 @@ FILE* readInput(char* filename, int* nrows, int* ncolumns) {
 void childProcess(int processNumber, int* inputPipe, int* outputPipe, int* currentRow, int* previousRow, int* nextRow, int ncols) {
     // Actualizar la generacion en currentRow
     // Mandar el resultado por el outputPipe
-    printf("This is from child %d. Current = %d%d%d%d%d\n", processNumber, currentRow[0], currentRow[1], currentRow[2], currentRow[3], currentRow[4]);
+    printf("Process %d has... ", processNumber);
+    for (int j = 0; j < ncols; j++) {
+        printf("%d ", currentRow[j]);
+    }
+    printf("\n");
+    write(outputPipe[WRITE_END], currentRow, sizeof(int) * ncols);
 }
 
 int* lineToArray(char* line, int len) {
@@ -72,17 +77,21 @@ void launchProcesses(int n_processes, int nrows, int ncols, FILE* file, int** in
         previousRow = currentRow;
         fgets(buffer, 255, file);
         currentRow = lineToArray(buffer, ncols);
+        int pid;
 
-        if (i > 1) {
-            if (fork() == 0) {
+        if (i > 0) {
+            if ((pid = fork()) == 0) {
                 close(outputPipes[processNumber][READ_END]);
                 close(inputPipes[processNumber][WRITE_END]);
                 childProcess(processNumber, inputPipes[processNumber], outputPipes[processNumber], previousRow, secondPreviousRow, currentRow, ncols);
                 exit(0);
             }
-            else {
+            else if (pid > 0) {
                 close(inputPipes[processNumber][READ_END]);	
                 close(outputPipes[processNumber][WRITE_END]);
+            }
+            else {
+                printf("Error launching process %d\n", processNumber);
             }
         }
     }
@@ -120,6 +129,7 @@ int main(int argc, char *argv[])
     char* filename;
     int** inputPipes;
     int** outputPipes;
+    int* row;
     int nrows, ncols;
     FILE* fp;
 
@@ -145,6 +155,11 @@ int main(int argc, char *argv[])
     // Esperar por el pipe que llege el "currentRow" eso es por outputPipes[i]
     // Escribir en un archivo
     // Meter todo en un while y leer el archivo resultante en lugar del que se mando por argumento al programa
+
+    row = malloc(sizeof(int) * ncols);
+    for (int i = 0; i < n_processes; i++) {
+        read(outputPipes[i][READ_END], row, sizeof(int) * ncols);
+    }
 
     int status;
     for (int i = 0; i < n_processes; ++i) {
