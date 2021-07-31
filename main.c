@@ -9,48 +9,45 @@
 const int WRITE_END = 1;
 const int READ_END = 0;
 
-enum ProcessState {Created = 0, Start = 1, Starting = 2}; 
 enum Commands{SETROWS = 0, SETCOLS = 1};
 
 void writeCommandToPipe(int* pipe, int command, int source, int target) {
     char buffer[100];
+    int result;
     sprintf(buffer, "%d,%d,%d;", command, source, target);
     printf("Writing command to pipe: %s\n", buffer);
-    write(pipe[WRITE_END], buffer, strlen(buffer) + 1);
+    result = write(pipe[WRITE_END], buffer, strlen(buffer) + 1);
+    if (result == -1) {
+        printf("Hubo un error escribiendo");
+    }
 }
 
-void readInput(char* filename, int** pipes, int n_processes) {
+FILE* readInput(char* filename, int** pipes, int n_processes, int* nrows, int* ncolumns) {
     FILE * fp;
     char * line = NULL;
     size_t len = 0;
     ssize_t read;
     char buffer[100];
-    int ncolumns, nrows;
 
     fp = fopen(filename, "r");
     if (fp == NULL)
         exit(EXIT_FAILURE);
 
     
-    fscanf(fp,"%d %d", &nrows, &ncolumns);
+    fscanf(fp,"%d", nrows);
+    fscanf(fp,"%d", ncolumns);
 
-    for (int i = 0; i < n_processes; i++) {
-        writeCommandToPipe(pipes[i], SETROWS, nrows, 0);
-        writeCommandToPipe(pipes[i], SETCOLS, ncolumns, 0);
-    }
+    //while ((read = getline(&line, &len, fp)) != -1) {
+    //    //Mandar contenido de la fila al proceso
+    //    //printf("%s", line);
+    //}
 
-    while ((read = getline(&line, &len, fp)) != -1) {
-        //Mandar contenido de la fila al proceso
-        //printf("%s", line);
-    }
-
-    fclose(fp);
-    if (line)
-        free(line);
+    //fclose(fp);
+    //if (line)
+    //    free(line);
 }
 
 void childProcess(int processNumber, int** pipes) {
-    enum ProcessState state = Created;
     enum Commands command;
     int source, target;
     int nrows, ncols;
@@ -107,6 +104,8 @@ int main(int argc, char *argv[])
     int n_processes, n_generations, n_visualizations;
     char* filename;
     int** pipes;
+    int nrows, ncols;
+    FILE* fp;
 
     n_processes = atoi(argv[1]);
     n_generations = atoi(argv[2]);
@@ -114,12 +113,11 @@ int main(int argc, char *argv[])
     filename = argv[4];
 
     printf("n_processes = %d\n", n_processes);
+    fp = readInput(filename, pipes, n_processes, &nrows, &ncols);
 
     pipes = createPipes(n_processes);
     launchProcesses(n_processes, pipes);
     sleep(3);
-
-    readInput(filename, pipes, n_processes);
 
     for (int i = 0; i < n_processes; i++) {
         close(pipes[i][WRITE_END]);
