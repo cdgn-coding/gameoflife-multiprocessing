@@ -43,15 +43,19 @@ FILE* readInput(char* filename, int* nrows, int* ncolumns) {
 void childProcess(int processNumber, int* inputPipe, int* outputPipe, int* currentRow, int* previousRow, int* nextRow, int ncols) {
     // Actualizar la generacion en currentRow
     // Mandar el resultado por el outputPipe
-    printf("This is from child %d. Current = %d%d%d%d\n", processNumber, currentRow[0], currentRow[1], currentRow[2], currentRow[3]);
+    printf("This is from child %d. Current = %d%d%d%d%d\n", processNumber, currentRow[0], currentRow[1], currentRow[2], currentRow[3], currentRow[4]);
 }
 
 int* lineToArray(char* line, int len) {
     int* arr = malloc(len * sizeof(int));
     char digit[] = "x";
-    for (int i = 0; i < len; i++) {
-        digit[0] = line[i];
-        arr[i] = atoi(digit);
+    int j = 0;
+    for (int i = 0; i < strlen(line); i++) {
+        if (line[i] != ' ') {
+            digit[0] = line[i];
+            arr[j] = atoi(digit);
+            j++;
+        }
     }
     return arr;
 }
@@ -65,9 +69,9 @@ void launchProcesses(int n_processes, int nrows, int ncols, FILE* file, int** in
 
     for (int i = 0; i < n_processes; ++i) {
         processNumber = i - 1;
-        fscanf(file, "%s", buffer);
         secondPreviousRow = previousRow;
         previousRow = currentRow;
+        fgets(buffer, 255, file);
         currentRow = lineToArray(buffer, ncols);
 
         if (i > 0) {
