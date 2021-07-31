@@ -9,4 +9,4 @@ dev:
 	docker run gameoflife $(FILE)
 
 run:
-	./main 4 3 2 ./fixtures/trinomio1
+	./main 5 3 2 ./fixtures/trinomio1
