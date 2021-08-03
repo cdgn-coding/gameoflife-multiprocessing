@@ -138,7 +138,7 @@ void gameOfLifeSubprocess(
     int ncols,
     int inputPipeFromMain
 ) {
-    int** submatrix = malloc(rowsOfProcess * sizeof(int));
+    int** submatrix = calloc(rowsOfProcess, sizeof(int));
     char rowContent[MAX_BUFFER_SIZE];
     char logDetail[MAX_BUFFER_SIZE];
     sprintf(logDetail, "Process %d.", processNumber);
@@ -150,7 +150,7 @@ void gameOfLifeSubprocess(
     if (LOG_LEVEL >= LOG) {
         for (int i = 0; i < rowsOfProcess; i++) {
             arrayToString(submatrix[0], ncols, rowContent);
-            printf("Row %d. %s is \"%s\"\n", i, logDetail, rowContent);
+            printf("Row %d. %s... Received \"%s\"\n", i, logDetail, rowContent);
         }
     }
 }
