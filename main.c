@@ -88,10 +88,6 @@ void arrayToString(int* arr, int len, char* dest) {
     for (int k = 0; k < len; k++) {
         sprintf(aux, "%s%d", dest, arr[k]);
         strcpy(dest, aux);
-        if (k < len - 1) {
-            sprintf(aux, "%s ", dest);
-            strcpy(dest, aux);
-        }
     }
 }
 
@@ -99,7 +95,17 @@ void arrayToString(int* arr, int len, char* dest) {
  * Write array to pipe
  */
 void writeArray(int pipeWriteEnd, int* arr, int len) {
-    write(pipeWriteEnd, arr, sizeof(int) * len);
+    int package_size = len + 1;
+    char* package = calloc(len + 1, sizeof(char));
+
+    for (int k = 0; k < len; k++) package[k] = arr[k] + '0';
+    package[len] = '\0';
+
+    if (LOG_LEVEL >= INFO) {
+        printf("Content to be sent to pipe: \"%s\"\n", package);
+    }
+
+    write(pipeWriteEnd, package, package_size);
 }
 
 /**
@@ -107,18 +113,19 @@ void writeArray(int pipeWriteEnd, int* arr, int len) {
  */
 int* readArray(int pipeReadEnd, int len, char* logDetail) {
     int* arr = calloc(len, sizeof(int));
+    char* package = calloc(len, sizeof(char));
     int response;
 
-    response = read(pipeReadEnd, arr, sizeof(int) * len);
-
-    if (LOG_LEVEL >= DEBUG) {
-        printf("%s When reading pipe, got response=%d\n", logDetail, response);
+    response = read(pipeReadEnd, package, len);
+    if (LOG_LEVEL >= INFO) {
+        printf("%s Content read from pipe: \"%s\", got response=%d (expected %d), errno=%d\n", logDetail, package, response, len, errno);
     }
 
     if ((response == -1) && (LOG_LEVEL >= ERROR)) {
         printf("%s When reading pipe, got response=%d. errno=%d\n", logDetail, response, errno);
     }
 
+    for (int k = 0; k < len; k++) arr[k] = package[k] - '0';
     return arr;
 }
 
@@ -143,7 +150,7 @@ void gameOfLifeSubprocess(
     if (LOG_LEVEL >= LOG) {
         for (int i = 0; i < rowsOfProcess; i++) {
             arrayToString(submatrix[0], ncols, rowContent);
-            printf("Row %d of process %s is %s\n", i, logDetail, rowContent);
+            printf("Row %d. %s is \"%s\"\n", i, logDetail, rowContent);
         }
     }
 }
@@ -243,8 +250,9 @@ void continueReadingInput(
                 printf("Reading line %d\n", lineCounter);
                 lineCounter++;
             }
+
             if (LOG_LEVEL >= INFO) {
-                printf("Content sent to process %d is %s\n", i, buffer);
+                printf("Content sent to process %d is \"%s\"\n", i, buffer);
             }
         }
     }
@@ -280,7 +288,7 @@ int main(int argc, char *argv[])
     int firstProcessRows = rowsPerProcess + (n_processes % nrows);
 
     if (LOG_LEVEL >= LOG) {
-        printf("nrows=%d, n_processes=%d, rowsPerProcess=%d, firstProcessRows=%d\n", nrows, n_processes, rowsPerProcess, firstProcessRows);
+        printf("nrows=%d, ncols=%d, n_processes=%d, rowsPerProcess=%d, firstProcessRows=%d\n", nrows, ncols, n_processes, rowsPerProcess, firstProcessRows);
     }
 
     if (LOG_LEVEL >= INFO) {
