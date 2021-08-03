@@ -6,7 +6,7 @@ clean:
 
 dev:
 	docker build -t gameoflife .
-	docker run gameoflife $(FILE)
+	docker run gameoflife 4 3 2 ./fixtures/profe
 
 run:
-	./main 20 3 2 ./fixtures/profe
+	./main $(n) 3 2 ./fixtures/$(file)

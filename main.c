@@ -1,33 +1,190 @@
 #include<stdio.h>
 #include<stdlib.h>
-#include<unistd.h>
-#include<sys/wait.h>
-#include<sys/types.h>
 #include<string.h>
+#include<sys/types.h>
+#include<unistd.h>
+#include<errno.h>
 #include<time.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+
+#define MAX_BUFFER_SIZE 255
 
 const int WRITE_END = 1;
 const int READ_END = 0;
 
-enum Commands{Executing = 0};
+const int FALSE = 0;
+const int TRUE = 1;
 
-void writeCommandToPipe(int* pipe, int command, int source, int target) {
-    char buffer[100];
-    sprintf(buffer, "%d,%d,%d;", command, source, target);
-    printf("Writing command to pipe: %s\n", buffer);
-    write(pipe[WRITE_END], buffer, strlen(buffer) + 1);
+const int DEBUG = 3;
+const int INFO = 2;
+const int LOG = 1;
+const int ERROR = 0;
+const int NO_LOGS = -1;
+const int LOG_LEVEL = INFO;
+
+/**
+ * Outputs the name of the fifo that inputs from processes to the main process
+ */
+char* inputFromMainPipeName(int processNumber) {
+    char* str = calloc(MAX_BUFFER_SIZE, sizeof(char));
+    sprintf(str, "/tmp/input_from_main_%d", processNumber);
+    return str;
 }
 
-void closeInput(FILE* fp) {
-    fclose(fp);
+/**
+ * Outputs the name of the fifo that outputs from processes to the main process
+ */
+char* outputToMainPipeName(int processNumber) {
+    char* str = malloc(MAX_BUFFER_SIZE * sizeof(char));
+    sprintf(str, "/tmp/output_to_main_%d", processNumber);
+    return str;
 }
 
-FILE* readInput(char* filename, int* nrows, int* ncolumns) {
+/**
+ * Create n_processes unnamed pipes
+ */ 
+void createPipes(int n_processes, char* logDetail) {
+    int response;
+    char errorMsg[MAX_BUFFER_SIZE];
+
+    for (int i = 0; i < n_processes; i++) {
+        mkfifo(inputFromMainPipeName(i), 0777);
+        mkfifo(outputToMainPipeName(i), 0777);
+    }
+}
+
+/**
+ * Open FIFOs from subprocesses, messages sent from main
+ */
+int* getSubprocessInputWriterFromMain(int n_processes) {
+    int* fifos = malloc(n_processes * sizeof(int));
+    char* fifoName;
+
+    for (int i = 0; i < n_processes; i++) {
+        fifoName = inputFromMainPipeName(i);
+        if (LOG_LEVEL >= DEBUG) {
+            printf("Opening FIFO %s\n", fifoName);
+        }
+        fifos[i] = open(fifoName, O_WRONLY);
+    }
+
+    return fifos;
+}
+
+int getSubprocessInputReaderFromMain(int processNumber) {
+    int response;
+    char* fifoName = inputFromMainPipeName(processNumber);
+    response = open(fifoName, O_RDONLY);
+    if ((response == -1) && (LOG_LEVEL >= ERROR)) {
+        printf("Error opening FIFO named %s. errno=%d\n", fifoName, errno);
+    }
+    return response;
+}
+
+void arrayToString(int* arr, int len, char* dest) {
+    char aux[MAX_BUFFER_SIZE] = "";
+    sprintf(dest, "");
+    for (int k = 0; k < len; k++) {
+        sprintf(aux, "%s%d", dest, arr[k]);
+        strcpy(dest, aux);
+        if (k < len - 1) {
+            sprintf(aux, "%s ", dest);
+            strcpy(dest, aux);
+        }
+    }
+}
+
+/**
+ * Write array to pipe
+ */
+void writeArray(int pipeWriteEnd, int* arr, int len) {
+    write(pipeWriteEnd, arr, sizeof(int) * len);
+}
+
+/**
+ * Read array from pipe
+ */
+int* readArray(int pipeReadEnd, int len, char* logDetail) {
+    int* arr = calloc(len, sizeof(int));
+    int response;
+
+    response = read(pipeReadEnd, arr, sizeof(int) * len);
+
+    if (LOG_LEVEL >= DEBUG) {
+        printf("%s When reading pipe, got response=%d\n", logDetail, response);
+    }
+
+    if ((response == -1) && (LOG_LEVEL >= ERROR)) {
+        printf("%s When reading pipe, got response=%d. errno=%d\n", logDetail, response, errno);
+    }
+
+    return arr;
+}
+
+/**
+ * Process function, solves game of life for a matrix chunk
+ */
+void gameOfLifeSubprocess(
+    int processNumber,
+    int rowsOfProcess,
+    int ncols,
+    int inputPipeFromMain
+) {
+    int** submatrix = malloc(rowsOfProcess * sizeof(int));
+    char rowContent[MAX_BUFFER_SIZE];
+    char logDetail[MAX_BUFFER_SIZE];
+    sprintf(logDetail, "Process %d.", processNumber);
+
+    for (int i = 0; i < rowsOfProcess; i++) {
+        submatrix[i] = readArray(inputPipeFromMain, ncols, logDetail);
+    }
+
+    if (LOG_LEVEL >= LOG) {
+        for (int i = 0; i < rowsOfProcess; i++) {
+            arrayToString(submatrix[0], ncols, rowContent);
+            printf("Row %d of process %s is %s\n", i, logDetail, rowContent);
+        }
+    }
+}
+
+/**
+ * Launches processes for every block
+ */ 
+void launchProcesses(
+    FILE* inputFile,
+    int n_processes,
+    int rowsPerProcess,
+    int firstProcessRows,
+    int ncols,
+    int n_generations,
+    int n_visualizations
+) {
+    int pid;
+
+    for (int i = 0; i < n_processes; i++) {
+        int rowsOfProcess = i == 0 ? firstProcessRows : rowsPerProcess;
+
+        if ((pid = fork()) == 0) {
+            int inputFromMain = getSubprocessInputReaderFromMain(i);
+            gameOfLifeSubprocess(i, rowsOfProcess, ncols, inputFromMain);
+            exit(0);
+        }
+        else if (pid < 0) {
+            printf("Error launching process %d\n", i);
+        }
+    }
+}
+
+/**
+ * Read nrows and ncols from the file
+ * Return the file poiting to the matrix
+ */ 
+FILE* startReadingInput(char* filename, int* nrows, int* ncolumns) {
     FILE * fp;
     char * line = NULL;
     size_t len = 0;
     ssize_t read;
-    char buffer[255];
 
     fp = fopen(filename, "r");
     if (fp == NULL)
@@ -39,19 +196,11 @@ FILE* readInput(char* filename, int* nrows, int* ncolumns) {
     return fp;
 }
 
-void childProcess(int processNumber, int* inputPipe, int* outputPipe, int* currentRow, int* previousRow, int* nextRow, int ncols) {
-    // Actualizar la generacion en currentRow
-    // Mandar el resultado por el outputPipe
-    printf("Process %d has... ", processNumber);
-    for (int j = 0; j < ncols; j++) {
-        printf("%d ", currentRow[j]);
-    }
-    printf("\n");
-    write(outputPipe[WRITE_END], currentRow, sizeof(int) * ncols);
-}
-
+/**
+ * Converts a string of the file to an array of numbers
+ */
 int* lineToArray(char* line, int len) {
-    int* arr = malloc(len * sizeof(int));
+    int* arr = calloc(len, sizeof(int));
     char digit[] = "x";
     int j = 0;
     for (int i = 0; i < strlen(line); i++) {
@@ -64,105 +213,108 @@ int* lineToArray(char* line, int len) {
     return arr;
 }
 
-void launchProcesses(int n_processes, int nrows, int ncols, FILE* file, int** inputPipes, int** outputPipes) {
-    int processNumber;
-    int* currentRow = NULL;
-    int* previousRow = NULL;
-    int* secondPreviousRow = NULL;
-    char buffer[255];
+/**
+ * Continue reading values from the file as a matrix
+ * Pass to processes, value by value
+ */
+void continueReadingInput(
+    FILE* inputFile,
+    int* inputPipesFromMain,
+    int n_processes,
+    int nrows,
+    int ncols,
+    int rowsPerProcess,
+    int firstProcessRows
+) {
+    int numberToRead;
+    int* matrixRow;
+    char buffer[MAX_BUFFER_SIZE];
+    int lineCounter = 0;
 
     for (int i = 0; i < n_processes; i++) {
-        processNumber = i - 1;
-        secondPreviousRow = previousRow;
-        previousRow = currentRow;
-        fgets(buffer, 255, file);
-        currentRow = lineToArray(buffer, ncols);
-        int pid;
+        int rowsToRead = i == 0 ? firstProcessRows : rowsPerProcess;
+        for (int j = 0; j < rowsToRead; j++) {
+            fgets(buffer, MAX_BUFFER_SIZE, inputFile);
+            matrixRow = lineToArray(buffer, ncols);
+            arrayToString(matrixRow, ncols, buffer);
+            writeArray(inputPipesFromMain[i], matrixRow, ncols);
 
-        if (i > 0) {
-            if ((pid = fork()) == 0) {
-                close(outputPipes[processNumber][READ_END]);
-                close(inputPipes[processNumber][WRITE_END]);
-                childProcess(processNumber, inputPipes[processNumber], outputPipes[processNumber], previousRow, secondPreviousRow, currentRow, ncols);
-                exit(0);
+            if (LOG_LEVEL >= DEBUG) {
+                printf("Reading line %d\n", lineCounter);
+                lineCounter++;
             }
-            else if (pid > 0) {
-                close(inputPipes[processNumber][READ_END]);	
-                close(outputPipes[processNumber][WRITE_END]);
-            }
-            else {
-                printf("Error launching process %d\n", processNumber);
+            if (LOG_LEVEL >= INFO) {
+                printf("Content sent to process %d is %s\n", i, buffer);
             }
         }
     }
-
-    processNumber = n_processes - 1;
-    if (fork() == 0) {
-        close(outputPipes[processNumber][READ_END]);
-        close(inputPipes[processNumber][WRITE_END]);
-        childProcess(processNumber, inputPipes[processNumber], outputPipes[processNumber], currentRow, previousRow, secondPreviousRow, ncols);
-        exit(0);
-    }
-    else {
-        close(inputPipes[processNumber][READ_END]);	
-        close(outputPipes[processNumber][WRITE_END]);
-    }
 }
 
-int** createPipes(int n_processes) {
-    int** pipes = (int**) malloc(n_processes * sizeof(int));
-    int response;
-    for (int i = 0; i < n_processes; i++) {
-        pipes[i] = (int*) malloc(sizeof(int) * 2);
-        response = pipe(pipes[i]);
-        if (response == -1) {
-            perror("Error creating pipe");
-            exit(1);
-        }
-    }
-    return pipes;
-}
- 
 int main(int argc, char *argv[])
 {
     int n_processes, n_generations, n_visualizations;
     char* filename;
-    int** inputPipes;
-    int** outputPipes;
-    int* row;
-    int nrows, ncols;
-    FILE* fp;
+    FILE* inputFile;
+    char logDetail[MAX_BUFFER_SIZE];
+    int* inputsFromMain;
 
+    // Read arguments
     n_processes = atoi(argv[1]);
     n_generations = atoi(argv[2]);
     n_visualizations = atoi(argv[3]);
     filename = argv[4];
 
-    fp = readInput(filename, &nrows, &ncols);
+    int nrows, ncols;
 
-    if (nrows != n_processes) {
-        printf("n_processes != nrows. This is not implemented yet");
+    if (LOG_LEVEL >= INFO) {
+        printf("Starting to read input...\n");
+    }
+    inputFile = startReadingInput(filename, &nrows, &ncols);
+
+    if (LOG_LEVEL >= INFO) {
+        printf("Procceeding to create FIFOs...\n");
+    }
+    createPipes(n_processes, logDetail);
+
+    int rowsPerProcess = nrows / n_processes;
+    int firstProcessRows = rowsPerProcess + (n_processes % nrows);
+
+    if (LOG_LEVEL >= LOG) {
+        printf("nrows=%d, n_processes=%d, rowsPerProcess=%d, firstProcessRows=%d\n", nrows, n_processes, rowsPerProcess, firstProcessRows);
     }
 
-    inputPipes = createPipes(n_processes);
-    outputPipes = createPipes(n_processes);
-
-    launchProcesses(n_processes, nrows, ncols, fp, inputPipes, outputPipes);
-    closeInput(fp);
-
-
-    // Por cada proceso i
-    // Esperar por el pipe que llege el "currentRow" eso es por outputPipes[i]
-    // Escribir en un archivo
-    // Meter todo en un while y leer el archivo resultante en lugar del que se mando por argumento al programa
-
-    row = malloc(sizeof(int) * ncols);
-    for (int i = 0; i < n_processes; i++) {
-        read(outputPipes[i][READ_END], row, sizeof(int) * ncols);
+    if (LOG_LEVEL >= INFO) {
+        printf("Procceeding to launch processes\n");
     }
 
-    int status;
-    for (int i = 0; i < n_processes; ++i) {
-        wait(&status);
+    launchProcesses(
+        inputFile,
+        n_processes,
+        rowsPerProcess,
+        firstProcessRows,
+        ncols,
+        n_generations,
+        n_visualizations
+    );
+
+    if (LOG_LEVEL >= DEBUG) {
+        printf("Procceeding to open FIFOs to pass data to the subprocesses...\n");
     }
+    // Open FIFOS to pass data to the subprocesses
+    inputsFromMain = getSubprocessInputWriterFromMain(n_processes);
+
+    if (LOG_LEVEL >= DEBUG) {
+        printf("Procceeding to read the rest of the input...\n");
+    }
+
+    continueReadingInput(
+        inputFile,
+        inputsFromMain,
+        n_processes,
+        nrows,
+        ncols,
+        rowsPerProcess,
+        firstProcessRows
+    );
 }
+
