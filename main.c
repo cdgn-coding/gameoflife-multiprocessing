@@ -38,7 +38,7 @@ char* inputFromMainPipeName(int processNumber) {
  * Outputs the name of the fifo that outputs from processes to the main process
  */
 char* outputToMainPipeName(int processNumber) {
-    char* str = malloc(MAX_BUFFER_SIZE * sizeof(char));
+    char* str = (char*) malloc(MAX_BUFFER_SIZE * sizeof(char));
     sprintf(str, "/tmp/output_to_main_%d", processNumber);
     return str;
 }
@@ -71,7 +71,7 @@ void createPipes(int n_processes, char* logDetail) {
  * Open FIFOs from subprocesses, messages sent from main
  */
 int* getSubprocessInputWriterFromMain(int n_processes) {
-    int* fifos = malloc(n_processes * sizeof(int));
+    int* fifos = (int*) malloc(n_processes * sizeof(int));
     char* fifoName;
 
     for (int i = 0; i < n_processes; i++) {
@@ -152,7 +152,7 @@ void readArray(int pipeReadEnd, int len, int* dest, char* logDetail) {
     char* package;
     int package_size = len + 1;
 
-    package = malloc(package_size * sizeof(char));
+    package = (char*) malloc(package_size * sizeof(char));
     package[len] = '\0';
     response = read(pipeReadEnd, package, len);
 
@@ -198,7 +198,7 @@ void gameOfLifeSubprocess(
         printf("%s... Received \"%s\"\n", logDetail, rowContent);
     }
 
-    if (LOG_LEVEL) {
+    if (LOG_LEVEL >= INFO) {
         printf("%s Exiting correctly.\n", logDetail);
     }
 }
@@ -335,6 +335,10 @@ int main(int argc, char *argv[])
     }
     createPipes(n_processes, logDetail);
 
+    if (LOG_LEVEL >= LOG) {
+        printf("Computing parameters...\n");
+    }
+
     int rowsPerProcess = nrows / n_processes;
     int firstProcessRows = rowsPerProcess + (nrows % n_processes);
 
@@ -362,7 +366,7 @@ int main(int argc, char *argv[])
     // Open FIFOS to pass data to the subprocesses
     inputsFromMain = getSubprocessInputWriterFromMain(n_processes);
 
-    if (LOG_LEVEL >= DEBUG) {
+    if (LOG_LEVEL >= LOG) {
         printf("Procceeding to read the rest of the input...\n");
     }
 
