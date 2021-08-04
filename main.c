@@ -8,7 +8,7 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 
-#define MAX_BUFFER_SIZE 255
+#define MAX_BUFFER_SIZE 512
 
 const int WRITE_END = 1;
 const int READ_END = 0;
@@ -21,7 +21,9 @@ const int INFO = 2;
 const int LOG = 1;
 const int ERROR = 0;
 const int NO_LOGS = -1;
-const int LOG_LEVEL = INFO;
+int LOG_LEVEL = INFO;
+
+const char* text = "1234";
 
 /**
  * Outputs the name of the fifo that inputs from processes to the main process
@@ -47,10 +49,21 @@ char* outputToMainPipeName(int processNumber) {
 void createPipes(int n_processes, char* logDetail) {
     int response;
     char errorMsg[MAX_BUFFER_SIZE];
+    char* input;
+    char* output;
 
     for (int i = 0; i < n_processes; i++) {
-        mkfifo(inputFromMainPipeName(i), 0777);
-        mkfifo(outputToMainPipeName(i), 0777);
+        input = inputFromMainPipeName(i);
+        response = mkfifo(input, 0777);
+        if (response == -1) {
+            printf("Error opening pipe %s. errno=%d\n", input, errno);
+        }
+
+        output = outputToMainPipeName(i);
+        response = mkfifo(output, 0777);
+        if (response == -1) {
+            printf("Error opening pipe %s.\n", output);
+        }
     }
 }
 
@@ -75,6 +88,9 @@ int* getSubprocessInputWriterFromMain(int n_processes) {
 int getSubprocessInputReaderFromMain(int processNumber) {
     int response;
     char* fifoName = inputFromMainPipeName(processNumber);
+    if (LOG_LEVEL >= DEBUG) {
+        printf("Process %d opening FIFO %s\n", processNumber, fifoName);
+    }
     response = open(fifoName, O_RDONLY);
     if ((response == -1) && (LOG_LEVEL >= ERROR)) {
         printf("Error opening FIFO named %s. errno=%d\n", fifoName, errno);
@@ -91,42 +107,67 @@ void arrayToString(int* arr, int len, char* dest) {
     }
 }
 
+void matrixToString(int** arr, int rows, int cols, char* dest) {
+    char aux[MAX_BUFFER_SIZE] = "";
+    sprintf(dest, "");
+    for (int k = 0; k < rows; k++) {
+        for (int j = 0; j < cols; j++) {
+            sprintf(aux, "%s%d", dest, arr[k][j]);
+            strcpy(dest, aux);
+            if (j < cols - 1) {
+                sprintf(aux, "%s, ", dest);
+                strcpy(dest, aux);
+            }
+        }
+        if (k < rows - 1) {
+            sprintf(aux, "%s; ", dest);
+            strcpy(dest, aux);
+        }
+    }
+}
+
 /**
  * Write array to pipe
  */
 void writeArray(int pipeWriteEnd, int* arr, int len) {
-    int package_size = len + 1;
     char* package = calloc(len + 1, sizeof(char));
 
-    for (int k = 0; k < len; k++) package[k] = arr[k] + '0';
+    for (int k = 0; k < len; k++) {
+        package[k] = arr[k] + '0';
+    }
     package[len] = '\0';
 
-    if (LOG_LEVEL >= INFO) {
-        printf("Content to be sent to pipe: \"%s\"\n", package);
+    if (LOG_LEVEL >= DEBUG) {
+        printf("Content to be sent to pipe %d: \"%s\"\n", pipeWriteEnd, package);
     }
 
-    write(pipeWriteEnd, package, package_size);
+    write(pipeWriteEnd, package, len);
 }
 
 /**
  * Read array from pipe
  */
-int* readArray(int pipeReadEnd, int len, char* logDetail) {
-    int* arr = calloc(len, sizeof(int));
-    char* package = calloc(len, sizeof(char));
+void readArray(int pipeReadEnd, int len, int* dest, char* logDetail) {
     int response;
+    char* package;
+    int package_size = len + 1;
 
+    package = malloc(package_size * sizeof(char));
+    package[len] = '\0';
     response = read(pipeReadEnd, package, len);
-    if (LOG_LEVEL >= INFO) {
-        printf("%s Content read from pipe: \"%s\", got response=%d (expected %d), errno=%d\n", logDetail, package, response, len, errno);
+
+    if (LOG_LEVEL >= DEBUG) {
+        printf("%s Content read from pipe %d: \"%s\", got response=%d (expected %d), errno=%d\n", logDetail, pipeReadEnd, package, response, len, errno);
     }
 
     if ((response == -1) && (LOG_LEVEL >= ERROR)) {
         printf("%s When reading pipe, got response=%d. errno=%d\n", logDetail, response, errno);
     }
 
-    for (int k = 0; k < len; k++) arr[k] = package[k] - '0';
-    return arr;
+    for (int k = 0; k < len; k++) {
+        dest[k] = package[k] - '0';
+    }
+    free(package);
 }
 
 /**
@@ -138,20 +179,27 @@ void gameOfLifeSubprocess(
     int ncols,
     int inputPipeFromMain
 ) {
-    int** submatrix = calloc(rowsOfProcess, sizeof(int));
     char rowContent[MAX_BUFFER_SIZE];
     char logDetail[MAX_BUFFER_SIZE];
     sprintf(logDetail, "Process %d.", processNumber);
+    int** submatrix = (int**) malloc(rowsOfProcess * sizeof(int*));
 
     for (int i = 0; i < rowsOfProcess; i++) {
-        submatrix[i] = readArray(inputPipeFromMain, ncols, logDetail);
+        if (LOG_LEVEL >= DEBUG) {
+            printf("%s Reading row %d of matrix chunk\n", logDetail, i);
+        }
+        submatrix[i] = (int*) malloc(ncols * sizeof(int));
+        readArray(inputPipeFromMain, ncols, submatrix[i], logDetail);
     }
 
-    if (LOG_LEVEL >= LOG) {
-        for (int i = 0; i < rowsOfProcess; i++) {
-            arrayToString(submatrix[0], ncols, rowContent);
-            printf("Row %d. %s... Received \"%s\"\n", i, logDetail, rowContent);
-        }
+    // Be careful of long matrices
+    if (LOG_LEVEL >= DEBUG) {
+        matrixToString(submatrix, rowsOfProcess, ncols, rowContent);
+        printf("%s... Received \"%s\"\n", logDetail, rowContent);
+    }
+
+    if (LOG_LEVEL) {
+        printf("%s Exiting correctly.\n", logDetail);
     }
 }
 
@@ -174,6 +222,9 @@ void launchProcesses(
 
         if ((pid = fork()) == 0) {
             int inputFromMain = getSubprocessInputReaderFromMain(i);
+            if (LOG_LEVEL >= DEBUG) {
+                printf("Process %d inputFromMain=%d\n", i, inputFromMain);
+            }
             gameOfLifeSubprocess(i, rowsOfProcess, ncols, inputFromMain);
             exit(0);
         }
@@ -251,7 +302,7 @@ void continueReadingInput(
                 lineCounter++;
             }
 
-            if (LOG_LEVEL >= INFO) {
+            if (LOG_LEVEL >= DEBUG) {
                 printf("Content sent to process %d is \"%s\"\n", i, buffer);
             }
         }
@@ -285,10 +336,10 @@ int main(int argc, char *argv[])
     createPipes(n_processes, logDetail);
 
     int rowsPerProcess = nrows / n_processes;
-    int firstProcessRows = rowsPerProcess + (n_processes % nrows);
+    int firstProcessRows = rowsPerProcess + (nrows % n_processes);
 
     if (LOG_LEVEL >= LOG) {
-        printf("nrows=%d, ncols=%d, n_processes=%d, rowsPerProcess=%d, firstProcessRows=%d\n", nrows, ncols, n_processes, rowsPerProcess, firstProcessRows);
+        printf("Parameters: nrows=%d, ncols=%d, n_processes=%d, rowsPerProcess=%d, firstProcessRows=%d\n", nrows, ncols, n_processes, rowsPerProcess, firstProcessRows);
     }
 
     if (LOG_LEVEL >= INFO) {
@@ -324,5 +375,9 @@ int main(int argc, char *argv[])
         rowsPerProcess,
         firstProcessRows
     );
+    fclose(inputFile);
+    for (int k = 0; k < n_processes; k++) {
+        close(inputsFromMain[k]);
+    }
 }
 
